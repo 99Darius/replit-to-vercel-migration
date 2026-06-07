@@ -66,7 +66,8 @@ Full detail in `references/de-replit-checklist.md` and `references/vercel-expres
 
 **The user must drive DNS. Each app must be confirmed live-and-working first.**
 
-1. Confirm the `.vercel.app` build is green (tests pass, manual spot-check).
+0. **Hand the user the `.vercel.app` links and pause for manual verification.** Before any DNS change or Replit retirement, present every migrated app's live `.vercel.app` URL (plus admin paths / key flows) and invite the user to click through and confirm each looks right. This step is optional for them to act on but you must ALWAYS offer it — they own the apps and may catch issues automated tests can't (visual regressions, business-logic, missing content). Do not proceed to cutover or decommission until they've had the chance to spot-check. Wait for their go-ahead.
+1. Confirm the `.vercel.app` build is green (tests pass) AND the user has had the chance to spot-check (step 0).
 2. **User provisions DNS** at their registrar. For internet.bs: they log in (Playwright), you switch the apex `A` record `34.111.179.208` → Vercel (`76.76.21.21`) and any `www` CNAME → `cname.vercel-dns.com`. Lower TTL first if you want fast rollback.
 3. Wait for propagation + Vercel SSL issuance; verify the custom domain serves the new build (not Replit). Keep Replit deployment up until verified — zero downtime.
 4. Only then move to the next domain.
@@ -85,4 +86,5 @@ Full detail in `references/de-replit-checklist.md` and `references/vercel-expres
 | "git push will auto-deploy my fix" | Only if git-connected. Check deploy age / `vercel deploy --prod`. |
 | "Secure cookie, I'm done" | Add `trust proxy` or login silently breaks on Vercel. |
 | "DNS cutover now, then test" | Cut over LAST, per-domain, on a verified-live build. |
-| "Decommission Replit, migration's done" | Only after every domain verified on Vercel. |
+| "Tests pass, I'll cut over" | Hand the user the `.vercel.app` links FIRST; let them spot-check before any DNS change or retirement. |
+| "Decommission Replit, migration's done" | Only after every domain verified on Vercel AND the user has eyeballed the apps. |
