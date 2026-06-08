@@ -68,3 +68,16 @@ No `api/`, no `serverless.ts`. Confirm `registerRoutes` is genuinely empty and s
 - `git push` only auto-deploys if the project is git-connected. Otherwise `vercel deploy --prod`. Always verify deploy age after a fix.
 - Env var changes require a redeploy to take effect.
 - Stateful needs (websockets, in-process schedulers, long-running jobs): serverless won't hold state. Move schedulers to Vercel Cron endpoints (CRON_SECRET-gated; Hobby = daily only), sessions to a PG store (`connect-pg-simple`), or use Fly.io for a persistent server.
+
+
+## Stuck SSL cert after DNS cutover (apex domains)
+
+After flipping the apex A record to Vercel, the LE cert sometimes never issues even though DNS is verified, port 80 serves 200, and `acceptedChallenges` includes `http-01`. Symptom: `https://<domain>` TLS handshake fails (curl 000 / `SSL_ERROR_SYSCALL`) for 30-60+ min while the app works fine over HTTP and on `*.vercel.app`.
+
+Fix: force a fresh cert request by removing + re-adding the domain to the project, then re-verify:
+```
+DELETE /v9/projects/<proj>/domains/<domain>
+POST   /v10/projects/<proj>/domains   {"name":"<domain>"}
+POST   /v9/projects/<proj>/domains/<domain>/verify
+```
+Cert then issues within ~1-2 min. (Re-add is safe — DNS already points to Vercel, so there's no traffic gap.) Poll `https://<domain>/` for 200 before decommissioning the old host.
