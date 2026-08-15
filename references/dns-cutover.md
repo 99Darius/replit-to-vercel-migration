@@ -91,14 +91,28 @@ A web cutover changes **only** the address records for the web hostnames:
 
 | Record | Looks like | Breaks if you touch it |
 |---|---|---|
+| **apex `NS`** | the zone's own nameservers | **The entire domain — site and mail.** Worse than any mail record |
 | `MX` | `mx1.<provider>.com` | All inbound email, immediately |
 | SPF `TXT` | `v=spf1 include:... -all` | Outbound mail starts failing spam checks |
 | DKIM `TXT` | `<selector>._domainkey` | Outbound mail signature verification |
 | DMARC `TXT` | `_dmarc` | Mail policy / reporting |
 | Verification `TXT` | `google-site-verification=`, `MS=`, `<vendor>-verify=` | Loses proof of domain ownership — sometimes unrecoverable |
+| `CAA` | `0 issue "letsencrypt.org"` | Can block Vercel's cert from issuing — read it, don't delete it |
 
 Web hosting and email are independent. Moving a site between hosts should never
 require a mail record change. If a plan seems to, the plan is wrong.
+
+**The apex `NS` records are the trap that looks most like junk.** In a zone
+you have been told is full of cruft, two `NS` records pointing at the provider
+you are migrating *away from* read as obvious leftovers. They are not — they are
+the delegation that makes the zone resolve at all. Deleting them takes the whole
+domain down. Nameservers change only via the registrar's delegation settings,
+never by editing records in the zone.
+
+One `CAA` note: if a `CAA` record exists and does not authorise Let's Encrypt,
+Vercel's certificate will fail to issue no matter how correct the `A` record is.
+Read it during inventory; if it blocks issuance, that is a deliberate addition
+to discuss with the user, not a record to silently remove.
 
 ### Trap: nameserver delegation moves EVERYTHING
 
@@ -112,41 +126,105 @@ simply stops existing. Mail dies at propagation.
 delegate nameservers when the zone has no mail and no other records worth
 keeping, and only after the user agrees.
 
-### Trap: deletion granularity
+### Trap: write granularity on multi-valued records
 
-Many registrar APIs and CLI wrappers delete by **(host, type)** and have no way
-to target one record among several of the same type. A domain typically has
-three or more TXT records at the apex (SPF + several vendor verifications). A
-"delete the stale TXT" command against such a tool removes **all of them**,
-taking SPF and every verification with it.
+Many registrar APIs and CLI wrappers address records by **(host, type)** and
+have no way to target one record among several of the same type. A domain
+typically has three or more TXT records at the apex (SPF + several vendor
+verifications).
 
-Before any delete, establish that the tool can target a single record value —
-check `--help`, or read one record and confirm the interface exposes an id or
-value selector. If it cannot, **do not delete**. A stale record is harmless;
-a deleted SPF record is a live mail incident. Say so and move on.
+**This applies to writes, not just deletes:**
+
+- `del <host> <type>` removes **every** record of that type at that name. A
+  "delete the stale TXT" command takes SPF and every verification with it.
+- `set <host> <type> <value>` on a name that holds several records of that type
+  is equally ambiguous — it may update one, or collapse all of them into one.
+  You usually cannot tell from the interface, and guessing wrong destroys the
+  same records `del` would. A delete-then-restore sequence is *not* a safe
+  workaround; it relies on exactly the behaviour you could not confirm.
+- `MX` needs a priority field. If the tool's `set` signature has no slot for
+  one, MX writes are unrepresentable through it — a second, independent reason
+  to stay away from mail records with that tool.
+
+**The rule: before any write or delete against a (host, type) that holds more
+than one record, establish that the tool can target a single record.** Check
+`--help`, or read the zone and confirm the interface exposes an id or value
+selector. If it cannot, do not touch that name with that tool.
+
+Changing the apex `A` is safe under this rule precisely because there is exactly
+one `A` record — the ambiguity does not arise. That is the change you came to
+make; make only that one.
+
+### What to do about genuinely stale records
+
+Refusing the delete is correct, but "leave it" alone reads as a dodge to a user
+who explicitly asked for cleanup. Give them the real answer:
+
+A stale verification `TXT` (e.g. `replit-verify=…`) **is** safe to remove — but
+only with a tool that selects by value or record id (the registrar's web panel,
+or an API exposing record IDs), and only **after** cutover is verified. It is a
+separate, unhurried task, not part of the cutover.
+
+So: name which record is genuinely dead, explain that this tool cannot remove it
+without collateral, and offer the value-selective path as a later step. What you
+must not do is perform the destructive delete because cleanup was requested. A
+stale record costs a few bytes in a DNS response; a deleted SPF record is a live
+mail incident.
 
 ## Step 3 — Lower the TTL first (optional but cheap)
 
-Do this at least one old-TTL-period before the cutover — ideally a day ahead:
+Write the **same value** with a shorter TTL, one old-TTL-period before the
+cutover — ideally a day ahead:
 
 ```
 <apex>  A  <current old value>  TTL 300
 ```
 
-Same value, shorter TTL. Nothing changes for visitors, but rollback becomes
-5 minutes instead of hours. Skip only when the existing TTL is already ≤300.
+Nothing changes for visitors; rollback becomes 5 minutes instead of hours.
+
+**It only helps if you then wait out the OLD TTL before Step 5.** Resolvers that
+already cached the record keep serving it for up to the old TTL regardless of
+what you just wrote. Lowering the TTL and cutting over immediately buys nothing.
+
+So it is a straight either/or, and the user is usually in a hurry:
+
+| Situation | Do this |
+|---|---|
+| You can wait out the old TTL (e.g. 1h) | Lower TTL, wait, then cut over — rollback is ~5 min |
+| You cannot wait | **Skip this step**, cut over now, accept that a bad cutover takes up to the old TTL to undo |
+| Existing TTL already ≤300 | Skip — nothing to gain |
+
+Say which branch you took and what the rollback window therefore is. Do not
+present TTL-lowering as a prerequisite; it is insurance, and a user who cannot
+wait for it should still be able to cut over.
 
 ## Step 4 — Attach the domain in Vercel BEFORE changing DNS
 
 The certificate cannot issue until Vercel knows it owns the hostname.
 
 ```bash
-vercel domains add <domain>          # adds to the currently linked project
-vercel domains add www.<domain>
+# Project-explicit — use this in a portfolio migration.
+curl -X POST "https://api.vercel.com/v10/projects/<project>/domains" \
+  -H "Authorization: Bearer $VERCEL_TOKEN" \
+  -H "Content-Type: application/json" -d '{"name":"<domain>"}'
 ```
 
-Vercel then prints the exact record it wants. Use *that* value rather than
-anything hardcoded here — it is authoritative and occasionally changes.
+The CLI shorthand is fine for a one-off:
+
+```bash
+vercel domains add <domain>          # acts on the CURRENTLY LINKED project
+```
+
+**Prefer the project-explicit API form when migrating many apps.** `vercel
+domains add` targets whatever the last `vercel link` set, so cycling through a
+portfolio makes it easy to attach a domain to the wrong project — and you will
+debug it as a DNS problem.
+
+Either way, Vercel prints or returns the exact record it wants. **Use that value
+rather than anything hardcoded here.** The apex IP is not stable across accounts
+or project ages — `76.76.21.21` is long-standing, but newer projects are issued
+different addresses. Read it from Vercel per project; never copy it between
+projects.
 
 Current standard targets:
 

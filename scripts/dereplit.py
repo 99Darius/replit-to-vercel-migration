@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-"""De-Replit a standard Replit fullstack template (Express+Vite single server)."""
+"""De-Replit a standard Replit fullstack template (Express+Vite single server).
+
+FULLSTACK PATH ONLY. This writes server/serverless.ts + api/index.mjs and
+overwrites vercel.json with the API-rewrite config. Do NOT run it on a repl
+whose backend is dead code (empty registerRoutes, no client API calls) — you
+would immediately undo its output, and it raises if server/ is already gone.
+For that case see references/static-spa-apps.md.
+"""
 import json, re, sys, os
 
 os.chdir(sys.argv[1])
+
+if not os.path.isdir("server"):
+    sys.exit("no server/ directory — this looks like the static path; "
+             "see references/static-spa-apps.md instead of running this script")
 
 # vite.config.ts: strip @replit plugins
 if os.path.exists("vite.config.ts"):
@@ -62,8 +73,15 @@ open("vercel.json","w").write(json.dumps({
 }, indent=2)+"\n")
 
 if os.path.exists(".replit"): os.remove(".replit")
+
+# Check each entry independently. Gating the whole block on ".vercel not in gi"
+# meant a repo that already ignored .vercel never got .env / .env.* / .local/
+# added — a secret-leak path.
 gi = open(".gitignore").read() if os.path.exists(".gitignore") else "node_modules\ndist\n"
-if ".vercel" not in gi:
-    gi += "\n# Deployment\n.vercel\n.env\n.env.*\n.local/\n"
+missing = [e for e in (".vercel", ".env", ".env.*", ".local/")
+           if not any(line.strip() == e for line in gi.splitlines())]
+if missing:
+    if not gi.endswith("\n"): gi += "\n"
+    gi += "\n# Deployment\n" + "\n".join(missing) + "\n"
 open(".gitignore","w").write(gi)
 print("de-replited", sys.argv[1])

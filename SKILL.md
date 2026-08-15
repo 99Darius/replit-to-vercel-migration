@@ -19,6 +19,12 @@ Migrate Replit projects to: **GitHub** (private repos) + **Vercel** (hosting) + 
 
 ## Phase 0 — Portfolio audit (do this ONCE, before any migration)
 
+**Skip this entire phase for a single app.** If you already have the code
+locally and are migrating one project, start at **Phase 1 step 2** — there is no
+portfolio to audit, the DB-provider sizing rule has no answer at N=1, and the
+enumerate/download steps need a logged-in Replit session you may not have. Phase
+0 exists to make portfolio-wide decisions; one app has none to make.
+
 Holistic decisions are cheaper than per-app ones. See `references/audit-and-enumerate.md`.
 
 1. **Enumerate** every repl: Playwright → log into replit.com once (persistent profile) → `https://replit.com/repls` → click "Load more" until exhausted → scrape `a[href*="replId="]` for name/slug/replId/deploy-status/age. Watch for repls owned by collaborators.
@@ -36,8 +42,12 @@ Holistic decisions are cheaper than per-app ones. See `references/audit-and-enum
 Full detail in `references/de-replit-checklist.md` and `references/vercel-express-pattern.md`.
 
 1. **Unpack** clean: `unzip -q <zip> -x "*/.local/*"` (`.local/` is 100s of MB of agent cache).
-2. **Check whether the backend is real.** Replit's agent scaffolds its Express+Drizzle+Neon template even for brochure sites, so a large share of repls ship a server with zero routes and a database never queried. If `registerRoutes` is an empty stub and the client makes no API calls, take the static path in `references/static-spa-apps.md` instead — delete the server, skip the DB provisioning entirely, and deploy static. Verify before deleting; the checks are in that file.
-3. **De-Replit the code** (run `scripts/dereplit.py <dir>` for the common Express+Vite template, then verify):
+2. **Fork: is the backend real?** Replit's agent scaffolds its Express+Drizzle+Neon template even for brochure sites, so a large share of repls ship a server with zero routes and a database never queried. If `registerRoutes` is an empty stub and the client makes no API calls (verify with the checks in `references/static-spa-apps.md` — do not assume):
+   - **Static path** → do step 3, then **go to `references/static-spa-apps.md`** for the deletion, dependency stripping, and `vercel.json`. **Skip steps 4, 5 and 6 entirely** (no serverless entry, no secrets to extract, no data to migrate) and **rejoin at step 7**, omitting the DB and Blob lines.
+   - **Fullstack path** → continue through every step below.
+
+   Everything client-side — the SPA catch-all rewrite, the Tailwind opacity trap, contrast — applies to **both** paths.
+3. **De-Replit the code** (run `scripts/dereplit.py <dir>` for the common Express+Vite template, then verify). **Fullstack path only** — the script writes `server/serverless.ts` + `api/index.mjs` and overwrites `vercel.json` with the API-rewrite version, so on the static path it produces work you immediately undo, and it throws outright if `server/` is already deleted. On the static path do these items by hand:
    - Strip `@replit/vite-plugin-*` imports + deps from vite.config + package.json.
    - **Remove `client/index.html`'s `replit-dev-banner.js` `<script>`** (the vite-plugin strip does NOT touch this — easy to miss; it ships a replit.com script to prod).
    - Remove `pnpm-workspace.yaml` platform overrides that pin native binaries to linux-x64 only (breaks local installs).

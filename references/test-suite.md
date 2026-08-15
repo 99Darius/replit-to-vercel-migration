@@ -32,8 +32,11 @@ reporting.
 
 ```bash
 # Route matrix — every client route must be 200, not just the homepage.
-for p in "" about pricing contact; do
-  printf "/%-12s %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' https://<host>/$p)"
+# Take the list FROM THE ROUTER, never from memory: with an SPA catch-all
+# rewrite in place every path returns 200, so a guessed list self-passes.
+ROUTES=$(grep -oE 'path="[^"]+"' client/src/App.tsx | cut -d'"' -f2)
+for p in $ROUTES; do
+  printf "%-20s %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' "https://<host>$p")"
 done
 
 # Served by the new host, and no Replit residue.

@@ -93,19 +93,68 @@ nav link, reloads a page, or opens a deep link.
 The `headers` block is optional but free: Vite emits content-hashed asset
 filenames, so they are safe to cache permanently.
 
+**If the site has both an apex and a `www` domain**, add a canonical redirect —
+otherwise every URL exists twice. `redirects` must come **before** `rewrites`,
+or the catch-all swallows the request and the redirect never fires:
+
+```json
+{
+  "buildCommand": "vite build",
+  "outputDirectory": "dist/public",
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.example.com" }],
+      "destination": "https://example.com/$1",
+      "permanent": true
+    }
+  ],
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+```
+
+Vercel evaluates redirects → filesystem → rewrites, so this ordering is what
+makes both work together. `$1` preserves the path.
+
+**Also disable Deployment Protection.** New Vercel projects default to SSO
+protection ON and return 401 to everyone — the most likely failure mode for a
+public brochure site, and it looks like a broken deploy rather than a setting:
+
+```bash
+curl -X PATCH "https://api.vercel.com/v9/projects/<project>" \
+  -H "Authorization: Bearer $VERCEL_TOKEN" \
+  -H "Content-Type: application/json" -d '{"ssoProtection": null}'
+```
+
 This is only needed for client-side routing (wouter, react-router). A
 single-page site with anchor scrolling does not need it — but adding it is
 harmless, and the moment anyone adds a second route it becomes required.
 
-**Verify every route, not just the homepage:**
+**Verify every route, not just the homepage.** Read the real route list out of
+the router first — do not use a placeholder list:
 
 ```bash
-for p in "" about pricing contact; do
-  printf "/%-12s %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' https://<host>/$p)"
+grep -oE 'path="[^"]+"' client/src/App.tsx     # wouter / react-router
+```
+
+```bash
+ROUTES=$(grep -oE 'path="[^"]+"' client/src/App.tsx | cut -d'"' -f2)
+for p in $ROUTES; do
+  printf "%-20s %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' "https://<host>$p")"
 done
 ```
 
-All must be 200. A 404 here means the rewrite is missing or misordered.
+All must be 200. A 404 means the rewrite is missing or misordered.
+
+**This check silently self-passes if you invent the route names.** Once the
+catch-all rewrite is in place, *every* path returns 200 — including routes that
+do not exist. Running the loop against a guessed list therefore prints all-200
+and proves nothing at all. The assertion only has meaning when the list came
+from the router.
+
+Once the rewrite is confirmed working, the useful negative test is the opposite
+one: confirm a deliberately bogus path renders **your** 404 view rather than
+Vercel's, which tells you the SPA is handling the fallback.
 
 ### Consequence: unknown paths return 200
 
@@ -138,15 +187,30 @@ The symptom is easy to misread as a design choice until it lands somewhere
 load-bearing — e.g. a fixed nav styled `bg-deep-navy/95` renders with **no
 background**, giving white links on a white page.
 
-**Detect** (run against the built CSS, not the source):
+**Detect** — audit every opacity utility in the source against the built CSS.
+Run `npm run build` first; this reads the compiled output, which is the only
+artifact that proves whether a rule exists:
 
 ```bash
-grep -rhoE '\b(bg|text|border)-[a-z-]+/[0-9]+' client/src | sort -u > /tmp/used
-CSS=$(ls dist/public/assets/*.css)
-while read -r c; do
-  grep -q "$(printf '%s' "$c" | sed 's|/|\\\\/|')" "$CSS" || echo "MISSING: $c"
-done < /tmp/used
+python3 - "$(ls dist/public/assets/*.css)" <<'EOF'
+import re, sys, pathlib
+css = pathlib.Path(sys.argv[1]).read_text()
+used = set()
+for f in pathlib.Path("client/src").rglob("*.tsx"):
+    used |= set(re.findall(
+        r'\b((?:bg|text|border|ring|fill|stroke|from|to|via)-[a-z][a-z0-9-]*/\d+)',
+        f.read_text()))
+missing = sorted(c for c in used if c.replace("/", "\\/") not in css)
+print(f"used: {len(used)}   MISSING: {len(missing)}")
+for m in missing:
+    print("  ", m)
+EOF
 ```
+
+Anything listed as MISSING renders with no effect at all. Expect a handful of
+false positives from unused shadcn components whose CSS variables were never
+defined (`--sidebar-*`, `--chart-*`) — check whether anything imports them
+before chasing those.
 
 **Fix** — promote the colours to real theme colours. Store the variables as bare
 HSL channels so Tailwind can inject an alpha:
@@ -177,6 +241,17 @@ grep -o '\.bg-deep-navy\\/95{[^}]*}' dist/public/assets/*.css
 Note this changes the meaning of `var(--deep-navy)` — any remaining raw
 `background-color: var(--deep-navy)` must become `hsl(var(--deep-navy))` or use
 the utility.
+
+**Convert every token, not just the brand palette.** The shadcn scaffold defines
+`--primary`, `--secondary`, `--destructive`, `--accent`, `--muted`, `--border`
+and friends the same broken way, and `button.tsx` styles its hover states as
+`hover:bg-primary/90`, `hover:bg-destructive/90`, `hover:bg-secondary/80`. Leave
+those tokens alone and **every button on the site loses its hover feedback** —
+silently, with a clean `tsc` and a clean build. Treating the shadcn tokens as
+"out of scope" is a mistake; they are the ones with opacity variants baked into
+components you did not write.
+
+Run the detector above **after** converting; it catches exactly this.
 
 ## Wire up auto-deploy
 
