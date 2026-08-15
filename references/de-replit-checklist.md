@@ -19,10 +19,27 @@
 | `PORT`/`BASE_PATH` required + `host:"0.0.0.0"`/`reusePort` | vite/server | default them; Vercel sets PORT. `reusePort` is Linux-only — fine if standalone entry is dead, but confirm. |
 | Replit-proxied integrations | see `integrations.md` | swap to real providers |
 | missing `app.set("trust proxy", 1)` | session apps | add it — required for `secure` cookies behind Vercel TLS |
+| **backend that is never called** | `server/`, `shared/`, drizzle, neon deps | very common — the agent scaffolds its fullstack template for static sites. Detect + delete per `static-spa-apps.md` |
+| `"name": "rest-express"` | package.json | Replit's unrenamed default; rename to the real project |
 
 ## Latent bugs to expect
 
 Replit template code often never typechecked clean. Run `npx tsc --noEmit` and fix real errors (e.g. `err.error` vs `err.data?.error` in toast handlers, MemStorage create-methods missing nullable-field defaults before the spread, missing `<title>` in index.html). esbuild bundles without typechecking, so the build can succeed while `tsc` fails — fix anyway, tests will catch the runtime ones.
+
+**Typechecking will not catch CSS.** Two classes of styling bug ship clean
+through `tsc` and `vite build`:
+
+- **Tailwind brand colours defined as `@layer components` classes** — every
+  slash-opacity variant (`bg-brand/95`, `text-ink/70`) compiles to nothing at
+  all. Can render a fixed nav with no background: white links on a white page.
+  Detection + fix in `static-spa-apps.md`.
+- **Unusable contrast** on generated palettes — mid-tone brand colour on a dark
+  hero, "muted" text on a dark ground. The agent picks tokens that look fine in
+  a swatch and fail on the page.
+
+Neither surfaces in a build log. Look at rendered pages, and when a colour
+misbehaves, grep the **compiled** CSS for the rule rather than trusting the
+source.
 
 ## Verify clean
 

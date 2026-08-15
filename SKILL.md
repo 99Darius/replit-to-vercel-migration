@@ -36,19 +36,21 @@ Holistic decisions are cheaper than per-app ones. See `references/audit-and-enum
 Full detail in `references/de-replit-checklist.md` and `references/vercel-express-pattern.md`.
 
 1. **Unpack** clean: `unzip -q <zip> -x "*/.local/*"` (`.local/` is 100s of MB of agent cache).
-2. **De-Replit the code** (run `scripts/dereplit.py <dir>` for the common Express+Vite template, then verify):
+2. **Check whether the backend is real.** Replit's agent scaffolds its Express+Drizzle+Neon template even for brochure sites, so a large share of repls ship a server with zero routes and a database never queried. If `registerRoutes` is an empty stub and the client makes no API calls, take the static path in `references/static-spa-apps.md` instead — delete the server, skip the DB provisioning entirely, and deploy static. Verify before deleting; the checks are in that file.
+3. **De-Replit the code** (run `scripts/dereplit.py <dir>` for the common Express+Vite template, then verify):
    - Strip `@replit/vite-plugin-*` imports + deps from vite.config + package.json.
    - **Remove `client/index.html`'s `replit-dev-banner.js` `<script>`** (the vite-plugin strip does NOT touch this — easy to miss; it ships a replit.com script to prod).
    - Remove `pnpm-workspace.yaml` platform overrides that pin native binaries to linux-x64 only (breaks local installs).
    - Replace Replit-proxied integrations with real ones (see `references/integrations.md`): OpenAI `AI_INTEGRATIONS_*` → `OPENAI_API_KEY`; Gmail connector → Resend; GCS sidecar → Vercel Blob; object storage → Vercel Blob; Google Sheets connector → service account.
    - Drop hardcoded fallback secrets (`SESSION_SECRET ?? "..."`, `ADMIN_KEY || "..."`) → fail-fast.
    - Add `app.set("trust proxy", 1)` for ANY app using `secure` session cookies (Vercel terminates TLS; without it the cookie is silently dropped → login broken).
-3. **Add the Vercel entry** (`references/vercel-express-pattern.md`): `server/serverless.ts` exports the Express app (no `.listen()`); `api/index.mjs` re-exports the esbuild bundle; `vercel.json` builds vite + esbuild and rewrites `/api/:path*` → `/api`. Vercel preserves the original URL to the function, so Express's own `/api` mount matches. For SSR apps, route ALL paths to the function and serve static via `express.static` + `includeFiles`.
-4. **Extract secrets** from the repl (`references/secrets.md`): DB URL from Database pane → Settings; app secrets via the Secrets pane's "Copy secret value" buttons + a `navigator.clipboard.writeText` override to capture (reveal-in-DOM doesn't work). Never print full secret values.
-5. **Back up + migrate data** (`references/data-migration.md`): `pg_dump --schema=public --no-owner --no-privileges`; for junk/analytics tables add `--exclude-table-data`; strip `CREATE SCHEMA public;` before restore; restore with **plain `psql`** (not via any shell-rewriting proxy). Enable `CREATE EXTENSION vector` first if pgvector is used. Replit jsonb columns may hold empty strings (invalid JSON) — null them or exclude.
-6. **GitHub + Vercel + DB**:
-   - `gh repo create 99Darius/<name> --private --source . --remote origin --push`
+4. **Add the Vercel entry** (`references/vercel-express-pattern.md`): `server/serverless.ts` exports the Express app (no `.listen()`); `api/index.mjs` re-exports the esbuild bundle; `vercel.json` builds vite + esbuild and rewrites `/api/:path*` → `/api`. Vercel preserves the original URL to the function, so Express's own `/api` mount matches. For SSR apps, route ALL paths to the function and serve static via `express.static` + `includeFiles`. **Any client-routed SPA also needs a catch-all rewrite to `/index.html`** or every path except `/` 404s.
+5. **Extract secrets** from the repl (`references/secrets.md`): DB URL from Database pane → Settings; app secrets via the Secrets pane's "Copy secret value" buttons + a `navigator.clipboard.writeText` override to capture (reveal-in-DOM doesn't work). Never print full secret values.
+6. **Back up + migrate data** (`references/data-migration.md`): `pg_dump --schema=public --no-owner --no-privileges`; for junk/analytics tables add `--exclude-table-data`; strip `CREATE SCHEMA public;` before restore; restore with **plain `psql`** (not via any shell-rewriting proxy). Enable `CREATE EXTENSION vector` first if pgvector is used. Replit jsonb columns may hold empty strings (invalid JSON) — null them or exclude.
+7. **GitHub + Vercel + DB**:
+   - `gh repo create <owner>/<name> --private --source . --remote origin --push`
    - `vercel link --yes --project <name>`; `vercel integration add neon` (provisions + connects + writes `.env.local` in one shot); restore the dump into the new Neon DB.
+   - **`vercel git connect <repo-url> --yes`** — CLI-created projects are NOT git-connected, so pushes deploy nothing and you end up debugging a fix that never shipped.
    - `vercel blob create-store <name> --access public`, then connect via API `POST /v1/storage/stores/<id>/connections {projectId, envVarEnvironments}` (auto-injects `BLOB_READ_WRITE_TOKEN`). There is no `blob store add` subcommand.
    - Set env: shared LLM keys, app secrets, fresh `SESSION_SECRET`.
    - `vercel deploy --prod`. **New projects default to Deployment Protection ON (401)** — disable via API `PATCH /v9/projects/<name> {"ssoProtection": null}` for public apps.
@@ -68,9 +70,13 @@ Full detail in `references/de-replit-checklist.md` and `references/vercel-expres
 
 0. **Hand the user the `.vercel.app` links and pause for manual verification.** Before any DNS change or Replit retirement, present every migrated app's live `.vercel.app` URL (plus admin paths / key flows) and invite the user to click through and confirm each looks right. This step is optional for them to act on but you must ALWAYS offer it — they own the apps and may catch issues automated tests can't (visual regressions, business-logic, missing content). Do not proceed to cutover or decommission until they've had the chance to spot-check. Wait for their go-ahead.
 1. Confirm the `.vercel.app` build is green (tests pass) AND the user has had the chance to spot-check (step 0).
-2. **User provisions DNS** at their registrar. For internet.bs: they log in (Playwright), you switch the apex `A` record `34.111.179.208` → Vercel (`76.76.21.21`) and any `www` CNAME → `cname.vercel-dns.com`. Lower TTL first if you want fast rollback.
+2. **Change DNS** — full registrar-agnostic procedure in `references/dns-cutover.md`. In short: find who actually operates the zone (`dig NS`, often not the registrar); inventory every record first; then flip only the apex `A` (`34.111.179.208` → `76.76.21.21`) and any `www` CNAME → `cname.vercel-dns.com`. Lower TTL beforehand for fast rollback.
+   - **Access varies and that is fine.** If you hold a working DNS API/CLI, make the change (after confirming with the user). If not, hand them exact copy-pasteable record values for their panel — the template is in the reference — and verify with `dig` rather than assuming they applied it.
+   - **Never touch `MX`, SPF/DKIM/DMARC, or verification `TXT` records** during a web cutover. Web hosting and email are independent; a plan that requires a mail-record change is wrong. Beware DNS tools that delete by (host, type) — they take out every TXT at once, including SPF.
+   - **Do not delegate nameservers to Vercel** to "simplify" it. That moves the entire zone and silently drops all mail records.
 3. Wait for propagation + Vercel SSL issuance; verify the custom domain serves the new build (not Replit). Keep Replit deployment up until verified — zero downtime.
-4. Only then move to the next domain.
+4. Pick one canonical host (apex or `www`) and redirect the other, so the site is not served twice at two URLs.
+5. Only then move to the next domain.
 
 ## Phase 4 — Archive + decommission (LAST)
 
@@ -85,6 +91,12 @@ Full detail in `references/de-replit-checklist.md` and `references/vercel-expres
 | "The reviewer says the rewrite 404s — fix it" | Curl it first. Vercel preserves the URL; it works. |
 | "git push will auto-deploy my fix" | Only if git-connected. Check deploy age / `vercel deploy --prod`. |
 | "Secure cookie, I'm done" | Add `trust proxy` or login silently breaks on Vercel. |
+| "It's a static site, just point Vercel at the build" | Client-routed SPAs need a catch-all rewrite or every route but `/` 404s. |
+| "The repl has an Express server, so it's fullstack" | Check `registerRoutes`. The agent scaffolds a server for brochure sites; often it's dead code. |
+| "tsc and the build pass, styling is fine" | Neither checks CSS. Tailwind colours declared as `@layer components` drop every `/opacity` variant silently. |
+| "I'll clear that stale TXT record while I'm in here" | Most DNS tools delete by (host, type) — you'd take SPF and every verification with it. |
+| "Delegating NS to Vercel is simpler than one A record" | It moves the whole zone. All mail records vanish at propagation. |
+| "I have the registrar API, so I'll just make the change" | DNS is outward-facing. Confirm with the user first, even holding credentials. |
 | "DNS cutover now, then test" | Cut over LAST, per-domain, on a verified-live build. |
 | "Tests pass, I'll cut over" | Hand the user the `.vercel.app` links FIRST; let them spot-check before any DNS change or retirement. |
 | "Decommission Replit, migration's done" | Only after every domain verified on Vercel AND the user has eyeballed the apps. |

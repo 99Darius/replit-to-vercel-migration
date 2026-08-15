@@ -13,8 +13,22 @@ Covers the whole lifecycle for one repl or a whole portfolio:
 ## Layout
 
 - `SKILL.md` — the workflow (5 phases).
-- `references/` — deep-dives: audit/enumerate, de-Replit checklist, the Vercel+Express+Vite pattern, integration swaps, secret extraction, data migration, the Playwright suite.
+- `references/` — deep-dives:
+  - `audit-and-enumerate.md` — find and classify every repl
+  - `de-replit-checklist.md` — the code surgery, plus latent bugs to expect
+  - `vercel-express-pattern.md` — API / SSR / static deploy shapes
+  - `static-spa-apps.md` — repls whose backend is dead code: detect, strip, and deploy static (incl. the SPA catch-all rewrite)
+  - `integrations.md` · `secrets.md` · `data-migration.md` · `test-suite.md`
+  - `dns-cutover.md` — registrar-agnostic domain cutover, whether or not you have API access
 - `scripts/dereplit.py` — automates the common Express+Vite template de-Replit.
+
+## DNS access
+
+The cutover does **not** assume you can script your registrar. `dns-cutover.md`
+covers three modes: making the change via a configured API/CLI, setting one up,
+or generating exact copy-pasteable instructions for the user's DNS panel — with
+the same verification steps in all three. It also fences off the parts of a zone
+a web migration must never touch (`MX`, SPF/DKIM/DMARC, verification `TXT`).
 
 ## Install
 

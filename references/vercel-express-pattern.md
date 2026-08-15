@@ -58,9 +58,20 @@ app.use("*", (_req, res) => res.sendFile(path.resolve(publicDir, "index.html")))
 ## Pure static site (no API)
 
 ```json
-{ "buildCommand": "vite build", "outputDirectory": "dist/public" }
+{
+  "buildCommand": "vite build",
+  "outputDirectory": "dist/public",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
 ```
 No `api/`, no `serverless.ts`. Confirm `registerRoutes` is genuinely empty and storage is unused.
+
+**The rewrite is not optional for client-routed SPAs.** Without it Vercel serves
+files only, so every path except `/` 404s — the site looks fine until the first
+nav click, reload, or deep link. Curl every route, not just the homepage.
+
+Full path for this app class — dead-backend detection, dependency stripping,
+the Tailwind opacity trap, git auto-deploy: `static-spa-apps.md`.
 
 ## Deploy gotchas
 

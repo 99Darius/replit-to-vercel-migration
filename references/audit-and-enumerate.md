@@ -31,7 +31,7 @@ Navigate the browser to `https://replit.com/@<user>/<Slug>.zip`. Playwright save
 
 ## Find true deploy URLs + custom domains
 
-`<slug>.replit.app` guessing fails ~50% (deploy subdomains differ, e.g. `belayar-estate-1-dariuscheung.replit.app`). For each repl, navigate `...?deploymentPane=true` and scrape app links:
+`<slug>.replit.app` guessing fails ~50% (deploy subdomains differ — they often carry a numeric suffix and the owner's username, e.g. `<slug>-1-<username>.replit.app`). For each repl, navigate `...?deploymentPane=true` and scrape app links:
 ```js
 () => [...document.querySelectorAll('a[href]')].map(a => a.href)
   .filter(h => (h.includes('.replit.app') || (!h.includes('replit.com') && h.startsWith('http')))
